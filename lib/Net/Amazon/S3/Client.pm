@@ -118,6 +118,7 @@ sub _send_request_content {
 sub _send_request_xpc {
     my ( $self, $http_request, $filename ) = @_;
     my $http_response = $self->_send_request( $http_request, $filename );
+    $self->{http_response_content_xpc} = $http_response->content;
 
     my $doc = $self->s3->libxml->parse_string( $http_response->content );
     my $xpc = XML::LibXML::XPathContext->new($doc);
