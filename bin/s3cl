@@ -43,7 +43,7 @@ This program gives a command line interface to Amazons s3 storage
 service. It does not limit the number of requests (which may cost
 you more money than if you did it a different way!) and each
 request costs Money (although some costs from EC2 may be $0.0,
-check latest from Amazon costs page) - we take NO reponsibility
+check latest from Amazon costs page) - we take NO responsibility
 for your bill.
 
 =cut
@@ -291,7 +291,7 @@ sub get_options {
     my $help   = 0;
     my $man    = 0;
     my $force  = 0;
-    my $loc    = "US";
+    my $loc    = "us-east-1";
     my $bucket = "";
     GetOptions(
         \%args, "bucket=s", "jurisdiction=s",

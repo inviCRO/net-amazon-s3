@@ -10,6 +10,12 @@ has 'account' => ( is => 'ro', isa => 'Net::Amazon::S3', required => 1 );
 has 'bucket'  => ( is => 'ro', isa => 'Str',             required => 1 );
 has 'creation_date' => ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
 
+has 'region' => (
+    is => 'ro',
+    lazy => 1,
+    default => sub { $_[0]->_head_region },
+);
+
 __PACKAGE__->meta->make_immutable;
 
 # ABSTRACT: convenience object for working with Amazon S3 buckets
@@ -27,6 +33,11 @@ no strict 'vars'
   ok($bucket->add_key("key", "data", {
      content_type => "text/html",
     'x-amz-meta-colour' => 'orange',
+  }));
+
+  # Enable server-side encryption
+  ok($bucket->add_key("key", "data", {
+     encryption => 'AES256',
   }));
 
   # the err and errstr methods just proxy up to the Net::Amazon::S3's
@@ -80,27 +91,6 @@ Create a new bucket object. Expects a hash containing these two arguments:
 
 =cut
 
-sub _uri {
-    my ( $self, $key ) = @_;
-    return ($key)
-        ? $self->bucket . "/" . $self->account->_urlencode($key)
-        : $self->bucket . "/";
-}
-
-sub _conf_to_headers {
-    my ( $self, $conf ) = @_;
-    $conf = {} unless defined $conf;
-    $conf = {%$conf};    # clone it so as not to clobber the caller's copy
-
-    if ( $conf->{acl_short} ) {
-        $self->account->_validate_acl_short( $conf->{acl_short} );
-        $conf->{'x-amz-acl'} = $conf->{acl_short};
-        delete $conf->{acl_short};
-    }
-
-    return $conf;
-}
-
 =head2 add_key
 
 Takes three positional parameters:
@@ -138,12 +128,15 @@ sub add_key {
         delete $conf->{acl_short};
     }
 
+    my $encryption = delete $conf->{encryption};
+
     my $http_request = Net::Amazon::S3::Request::PutObject->new(
         s3        => $self->account,
         bucket    => $self->bucket,
         key       => $key,
         value     => $value,
         acl_short => $acl_short,
+        (encryption => $encryption) x!! defined $encryption,
         headers   => $conf,
     )->http_request;
 
@@ -221,6 +214,8 @@ sub copy_key {
 
     $conf->{'x-amz-copy-source'} = $source;
 
+    my $encryption = delete $conf->{encryption};
+
     my $acct    = $self->account;
     my $http_request = Net::Amazon::S3::Request::PutObject->new(
         s3        => $self->account,
@@ -228,6 +223,7 @@ sub copy_key {
         key       => $key,
         value     => '',
         acl_short => $acl_short,
+        (encryption => $encryption) x!! defined $encryption,
         headers   => $conf,
     )->http_request;
 
@@ -276,6 +272,26 @@ Takes the name of a key in this bucket and returns its configuration hash
 sub head_key {
     my ( $self, $key ) = @_;
     return $self->get_key( $key, "HEAD" );
+}
+
+=head2 query_string_authentication_uri KEY, EXPIRES_AT
+
+Takes key and expiration time (epoch time) and returns uri signed
+with query parameter
+
+=cut
+
+sub query_string_authentication_uri {
+    my ( $self, $key, $expires_at ) = @_;
+
+    my $request = Net::Amazon::S3::Request::GetObject->new(
+        s3     => $self->account,
+        bucket => $self,
+        key    => $key,
+        method => 'GET',
+    );
+
+    return $request->query_string_authentication_uri( $expires_at );
 }
 
 =head2 get_key $key_name [$method]
@@ -363,6 +379,37 @@ Returns true on success and false on failure
 =cut
 
 # returns bool
+sub delete_multi_object {
+    my $self = shift;
+    my @objects = @_;
+    return unless( scalar(@objects) );
+
+    # Since delete can handle up to 1000 requests, be a little bit nicer
+    # and slice up requests and also allow keys to be strings
+    # rather than only objects.
+    my $last_result;
+    while (scalar(@objects) > 0) {
+        my $http_request = Net::Amazon::S3::Request::DeleteMultiObject->new(
+            s3      => $self->account,
+            bucket  => $self,
+            keys    => [map {
+                if (ref($_)) {
+                    $_->key
+                } else {
+                    $_
+                }
+            } splice @objects, 0, ((scalar(@objects) > 1000) ? 1000 : scalar(@objects))]
+        )->http_request;
+
+        my $xpc = $self->account->_send_request($http_request);
+
+        return undef
+            unless $xpc && !$self->account->_remember_errors($xpc);
+    }
+
+    return 1;
+}
+
 sub delete_key {
     my ( $self, $key ) = @_;
     croak 'must specify key' unless defined $key && length $key;
@@ -584,8 +631,12 @@ sub get_location_constraint {
     return undef unless $xpc && !$self->account->_remember_errors($xpc);
 
     my $lc = $xpc->findvalue("//s3:LocationConstraint");
+
+    # S3 documentation: https://docs.aws.amazon.com/AmazonS3/latest/API/RESTBucketGETlocation.html
+    # When the bucket's region is US East (N. Virginia),
+    # Amazon S3 returns an empty string for the bucket's region
     if ( defined $lc && $lc eq '' ) {
-        $lc = undef;
+        $lc = 'us-east-1';
     }
     return $lc;
 }
@@ -648,6 +699,43 @@ sub _content_sub {
         $remaining -= length($buffer);
         return $buffer;
     };
+}
+
+sub _head_region {
+    my ($self) = @_;
+
+    my $protocol = $self->account->secure ? 'https' : 'http';
+    my $host = $self->account->host;
+    my $path = $self->bucket;
+    my @retry = (1, 2, (4) x 8);
+
+    if ($self->account->use_virtual_host) {
+        $host = "$path.$host";
+        $path = '';
+    }
+
+    my $request_uri = "${protocol}://${host}/$path";
+    while (@retry) {
+        my $request = HTTP::Request->new (HEAD => $request_uri);
+
+        # Disable redirects
+        my $requests_redirectable = $self->account->ua->requests_redirectable;
+        $self->account->ua->requests_redirectable( [] );
+
+        my $response = $self->account->_do_http( $request );
+
+        $self->account->ua->requests_redirectable( $requests_redirectable );
+
+        return $response->header ('x-amz-bucket-region')
+            if $response->header ('x-amz-bucket-region');
+
+        print STDERR "Invalid bucket head response; $request_uri\n";
+        print STDERR $response->as_string;
+
+        sleep shift @retry;
+    }
+
+    die "Cannot determine bucket region; bucket=${\ $self->bucket }";
 }
 
 1;

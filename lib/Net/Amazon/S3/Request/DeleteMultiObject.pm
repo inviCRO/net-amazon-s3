@@ -5,19 +5,20 @@ use Digest::MD5 qw/md5 md5_hex/;
 use MIME::Base64;
 use Carp qw/croak/;
 
-extends 'Net::Amazon::S3::Request';
+extends 'Net::Amazon::S3::Request::Bucket';
 
-has 'bucket'    => ( is => 'ro', isa => 'BucketName', required => 1 );
 has 'keys'      => ( is => 'ro', isa => 'ArrayRef',   required => 1 );
+
+with 'Net::Amazon::S3::Request::Role::Query::Action::Delete';
+with 'Net::Amazon::S3::Request::Role::HTTP::Header::Content_length';
+with 'Net::Amazon::S3::Request::Role::HTTP::Header::Content_md5';
+with 'Net::Amazon::S3::Request::Role::HTTP::Header::Content_type' => { content_type => 'application/xml' };
+with 'Net::Amazon::S3::Request::Role::HTTP::Method::POST';
 
 __PACKAGE__->meta->make_immutable;
 
-sub http_request {
-    my $self = shift;
-
-    #croak if we get a request for over 1000 objects
-    croak "The maximum number of keys is 1000"
-        if (scalar(@{$self->keys}) > 1000);
+sub _request_content {
+    my ($self) = @_;
 
     #build XML doc
     my $xml_doc = XML::LibXML::Document->new('1.0','UTF-8');
@@ -31,26 +32,14 @@ sub http_request {
         $root_element->addChild($obj_element);
     }
 
-    my $content = $xml_doc->toString;
+    return $xml_doc->toString;
+}
 
-    my $md5        = md5($content);
-    my $md5_base64 = encode_base64($md5);
-    chomp $md5_base64;
+sub BUILD {
+    my ($self) = @_;
 
-    my $header_spec = {
-        'Content-MD5'    => $md5_base64,
-        'Content-Length' => length $content,
-        'Content-Type'   => 'application/xml'
-    };
-
-    #build signed request
-    return Net::Amazon::S3::HTTPRequest->new(
-        s3      => $self->s3,
-        method  => 'POST',
-        path    => $self->bucket . '/?delete',
-        content => $content,
-        headers => $header_spec,
-    )->http_request;
+    croak "The maximum number of keys is 1000"
+        if (scalar(@{$self->keys}) > 1000);
 }
 
 1;

@@ -2,34 +2,22 @@ package Net::Amazon::S3::Request::InitiateMultipartUpload;
 
 use Moose 0.85;
 use MooseX::StrictConstructor 0.16;
-extends 'Net::Amazon::S3::Request';
+extends 'Net::Amazon::S3::Request::Object';
 
-has 'bucket'     => ( is => 'ro', isa => 'BucketName',      required => 1 );
-has 'key'        => ( is => 'ro', isa => 'Str',             required => 1 );
-has 'acl_short'  => ( is => 'ro', isa => 'Maybe[AclShort]', required => 0 );
 has 'headers' =>
     ( is => 'ro', isa => 'HashRef', required => 0, default => sub { {} } );
-has 'encryption' => ( is => 'ro', isa => 'Maybe[Str]',      required => 0 );
+
+with 'Net::Amazon::S3::Request::Role::Query::Action::Uploads';
+with 'Net::Amazon::S3::Request::Role::HTTP::Header::Acl_short';
+with 'Net::Amazon::S3::Request::Role::HTTP::Header::Encryption';
+with 'Net::Amazon::S3::Request::Role::HTTP::Method::POST';
 
 __PACKAGE__->meta->make_immutable;
 
-sub http_request {
-    my $self    = shift;
-    my $headers = $self->headers;
+sub _request_headers {
+    my ($self) = @_;
 
-    if ( $self->acl_short ) {
-        $headers->{'x-amz-acl'} = $self->acl_short;
-    }
-    if ( defined $self->encryption ) {
-        $headers->{'x-amz-server-side-encryption'} = $self->encryption;
-    }
-
-    return Net::Amazon::S3::HTTPRequest->new(
-        s3      => $self->s3,
-        method  => 'POST',
-        path    => $self->_uri( $self->key ).'?uploads',
-        headers => $self->headers,
-    )->http_request;
+    return %{ $self->headers };
 }
 
 1;

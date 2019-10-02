@@ -107,6 +107,7 @@ Development of this code happens here: https://github.com/rustyconover/net-amazo
 
 use Carp;
 use Digest::HMAC_SHA1;
+use Scalar::Util;
 
 use Net::Amazon::S3::Bucket;
 use Net::Amazon::S3::Client;
@@ -135,28 +136,49 @@ use Net::Amazon::S3::Request::PutPart;
 use Net::Amazon::S3::Request::Restore;
 use Net::Amazon::S3::Request::SetBucketAccessControl;
 use Net::Amazon::S3::Request::SetObjectAccessControl;
+use Net::Amazon::S3::Signature::V2;
+use Net::Amazon::S3::Signature::V4;
 use LWP::UserAgent::Determined;
 use URI::Escape qw(uri_escape_utf8);
 use XML::LibXML;
 use XML::LibXML::XPathContext;
 
+my $AMAZON_S3_HOST = 's3.amazonaws.com';
+
 has 'use_iam_role' => ( is => 'ro', isa => 'Bool', required => 0, default => 0);
 has 'aws_access_key_id'     => ( is => 'rw', isa => 'Str', required => 0 );
 has 'aws_secret_access_key' => ( is => 'rw', isa => 'Str', required => 0 );
-has 'secure' => ( is => 'ro', isa => 'Bool', required => 0, default => 0 );
+has 'secure' => ( is => 'ro', isa => 'Bool', required => 0, default => 1 );
 has 'timeout' => ( is => 'ro', isa => 'Num',  required => 0, default => 30 );
 has 'retry'   => ( is => 'ro', isa => 'Bool', required => 0, default => 0 );
-has 'host'    => ( is => 'ro', isa => 'Str',  required => 0, default => 's3.amazonaws.com' );
-has 'use_virtual_host' => ( is => 'rw', isa => 'Bool', required => 0, default => 0 );
+has 'host'    => ( is => 'ro', isa => 'Str',  required => 0, default => $AMAZON_S3_HOST );
+has 'use_virtual_host' => (
+    is => 'ro',
+    isa => 'Bool',
+    required => 0,
+    lazy => 1,
+    default => sub { $_[0]->authorization_method->enforce_use_virtual_host },
+);
 has 'libxml' => ( is => 'rw', isa => 'XML::LibXML',    required => 0 );
 has 'ua'     => ( is => 'rw', isa => 'LWP::UserAgent', required => 0 );
 has 'err'    => ( is => 'rw', isa => 'Maybe[Str]',     required => 0 );
 has 'errstr' => ( is => 'rw', isa => 'Maybe[Str]',     required => 0 );
 has 'aws_session_token' => ( is => 'rw', isa => 'Str', required => 0 );
+has authorization_method => (
+    is => 'ro',
+    isa => 'Str',
+    required => 0,
+    lazy => 1,
+    default => sub {
+        $_[0]->host eq $AMAZON_S3_HOST
+            ? 'Net::Amazon::S3::Signature::V4'
+            : 'Net::Amazon::S3::Signature::V2'
+    },
+);
+
+has keep_alive_cache_size => ( is => 'ro', isa => 'Int', required => 0, default => 10 );
 
 __PACKAGE__->meta->make_immutable;
-
-my $KEEP_ALIVE_CACHESIZE = 10;
 
 =head1 METHODS
 
@@ -196,8 +218,14 @@ with a true value.
 
 =item secure
 
-Set this to C<1> if you want to use SSL-encrypted connections when talking
-to S3. Defaults to C<0>.
+Set this to C<0> if you don't want to use SSL-encrypted connections when talking
+to S3. Defaults to C<1>.
+
+To use SSL-encrypted connections, LWP::Protocol::https is required.
+
+=item keep_alive_cache_size
+
+Set this to C<0> to disable Keep-Alives.  Default is C<10>.
 
 =item timeout
 
@@ -215,14 +243,20 @@ as recommended by Amazon. Defaults to off.
 The S3 host endpoint to use. Defaults to 's3.amazonaws.com'. This allows
 you to connect to any S3-compatible host.
 
-=back
-
 =item use_virtual_host
 
 Use the virtual host method ('bucketname.s3.amazonaws.com') instead of specifying the
-bucket at the first part of the path. This is particularily useful if you want to access
+bucket at the first part of the path. This is particularly useful if you want to access
 buckets not located in the US-Standard region (such as EU, Asia Pacific or South America).
 See L<http://docs.aws.amazon.com/AmazonS3/latest/dev/VirtualHosting.html> for the pros and cons.
+
+=item authorization_method
+
+Authorization implementation package name.
+
+This library provides L<< Net::Amazon::S3::Signature::V2 >> and L<< Net::Amazon::S3::Signature::V4 >>
+
+Default is Signature 4 if host is C<< s3.amazonaws.com >>, Signature 2 otherwise
 
 =back
 
@@ -251,13 +285,13 @@ sub BUILD {
     my $ua;
     if ( $self->retry ) {
         $ua = LWP::UserAgent::Determined->new(
-            keep_alive            => $KEEP_ALIVE_CACHESIZE,
+            keep_alive            => $self->keep_alive_cache_size,
             requests_redirectable => [qw(GET HEAD DELETE PUT POST)],
         );
         $ua->timing('1,2,4,8,16,32');
     } else {
         $ua = LWP::UserAgent->new(
-            keep_alive            => $KEEP_ALIVE_CACHESIZE,
+            keep_alive            => $self->keep_alive_cache_size,
             requests_redirectable => [qw(GET HEAD DELETE PUT POST)],
         );
     }
@@ -267,6 +301,15 @@ sub BUILD {
 
     $self->ua($ua);
     $self->libxml( XML::LibXML->new );
+
+    if ($self->use_iam_role) {
+        eval "require VM::EC2::Security::CredentialCache" or die $@;
+        my $creds = VM::EC2::Security::CredentialCache->get();
+        defined($creds) || die("Unable to retrieve IAM role credentials");
+        $self->aws_access_key_id($creds->accessKeyId);
+        $self->aws_secret_access_key($creds->secretAccessKey);
+        $self->aws_session_token($creds->sessionToken);
+    }
 }
 
 =head2 buckets
@@ -322,7 +365,7 @@ The name of the bucket you want to add
 
 =item acl_short (optional)
 
-See the set_acl subroutine for documenation on the acl_short options
+See the set_acl subroutine for documentation on the acl_short options
 
 =item location_constraint (option)
 
@@ -361,9 +404,13 @@ Returns an (unverified) bucket object from an account. Does no network access.
 =cut
 
 sub bucket {
-    my ( $self, $bucketname ) = @_;
+    my ( $self, $bucket ) = @_;
+
+    return $bucket
+        if Scalar::Util::blessed( $bucket ) && $bucket->isa( 'Net::Amazon::S3::Bucket' );
+
     return Net::Amazon::S3::Bucket->new(
-        { bucket => $bucketname, account => $self } );
+        { bucket => $bucket, account => $self } );
 }
 
 =head2 delete_bucket

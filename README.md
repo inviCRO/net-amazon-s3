@@ -51,3 +51,5 @@ following notice:
 * Pedro Figueiredo <me@pedrofigueiredo.org> - since 0.54.
 
 * Rusty Conover <rusty@luckydinosaur.com> - since 0.80.
+
+* Leo Lapworth <leo@cuckoo.org> - since 0.81

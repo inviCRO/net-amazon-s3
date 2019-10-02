@@ -2,18 +2,27 @@ package Net::Amazon::S3::Request::SetBucketAccessControl;
 
 use Moose 0.85;
 use MooseX::StrictConstructor 0.16;
-extends 'Net::Amazon::S3::Request';
+extends 'Net::Amazon::S3::Request::Bucket';
 
 # ABSTRACT: An internal class to set a bucket's access control
 
-has 'bucket'    => ( is => 'ro', isa => 'BucketName',      required => 1 );
-has 'acl_short' => ( is => 'ro', isa => 'Maybe[AclShort]', required => 0 );
+with 'Net::Amazon::S3::Request::Role::HTTP::Header::Acl_short';
+
 has 'acl_xml'   => ( is => 'ro', isa => 'Maybe[Str]',      required => 0 );
+
+with 'Net::Amazon::S3::Request::Role::Query::Action::Acl';
+with 'Net::Amazon::S3::Request::Role::HTTP::Method::PUT';
 
 __PACKAGE__->meta->make_immutable;
 
-sub http_request {
-    my $self = shift;
+sub _request_content {
+    my ($self) = @_;
+
+    return $self->acl_xml || '';
+}
+
+sub BUILD {
+    my ($self) = @_;
 
     unless ( $self->acl_xml || $self->acl_short ) {
         confess "need either acl_xml or acl_short";
@@ -22,20 +31,6 @@ sub http_request {
     if ( $self->acl_xml && $self->acl_short ) {
         confess "can not provide both acl_xml and acl_short";
     }
-
-    my $headers
-        = ( $self->acl_short )
-        ? { 'x-amz-acl' => $self->acl_short }
-        : {};
-    my $xml = $self->acl_xml || '';
-
-    return Net::Amazon::S3::HTTPRequest->new(
-        s3      => $self->s3,
-        method  => 'PUT',
-        path    => $self->_uri('') . '?acl',
-        headers => $headers,
-        content => $xml,
-    )->http_request;
 }
 
 1;

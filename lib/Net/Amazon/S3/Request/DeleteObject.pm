@@ -2,24 +2,13 @@ package Net::Amazon::S3::Request::DeleteObject;
 
 use Moose 0.85;
 use Moose::Util::TypeConstraints;
-extends 'Net::Amazon::S3::Request';
+extends 'Net::Amazon::S3::Request::Object';
 
 # ABSTRACT: An internal class to delete an object
 
-has 'bucket' => ( is => 'ro', isa => 'BucketName', required => 1 );
-has 'key'    => ( is => 'ro', isa => 'Str',        required => 1 );
+with 'Net::Amazon::S3::Request::Role::HTTP::Method::DELETE';
 
 __PACKAGE__->meta->make_immutable;
-
-sub http_request {
-    my $self = shift;
-
-    return Net::Amazon::S3::HTTPRequest->new(
-        s3     => $self->s3,
-        method => 'DELETE',
-        path   => $self->_uri( $self->key ),
-    )->http_request;
-}
 
 1;
 

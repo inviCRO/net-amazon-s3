@@ -2,33 +2,22 @@ package Net::Amazon::S3::Request::GetObject;
 
 use Moose 0.85;
 use MooseX::StrictConstructor 0.16;
-extends 'Net::Amazon::S3::Request';
+extends 'Net::Amazon::S3::Request::Object';
 
-has 'bucket' => ( is => 'ro', isa => 'BucketName', required => 1 );
-has 'key'    => ( is => 'ro', isa => 'Str',        required => 1 );
-has 'method' => ( is => 'ro', isa => 'HTTPMethod', required => 1 );
+with 'Net::Amazon::S3::Request::Role::HTTP::Method';
 
 # ABSTRACT: An internal class to get an object
 
 __PACKAGE__->meta->make_immutable;
 
-sub http_request {
-    my $self = shift;
-
-    return Net::Amazon::S3::HTTPRequest->new(
-        s3     => $self->s3,
-        method => $self->method,
-        path   => $self->_uri( $self->key ),
-    )->http_request;
-}
-
 sub query_string_authentication_uri {
-    my ( $self, $expires ) = @_;
+    my ( $self, $expires, $query_form ) = @_;
 
-    return Net::Amazon::S3::HTTPRequest->new(
-        s3     => $self->s3,
-        method => $self->method,
-        path   => $self->_uri( $self->key ),
+    my $uri = URI->new( $self->_request_path );
+    $uri->query_form( %$query_form ) if $query_form;
+
+    return $self->_build_signed_request(
+        path   => $uri->as_string,
     )->query_string_authentication_uri($expires);
 }
 
@@ -61,4 +50,3 @@ This method returns a HTTP::Request object.
 =head2 query_string_authentication_uri
 
 This method returns query string authentication URI.
-

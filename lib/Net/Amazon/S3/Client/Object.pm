@@ -17,7 +17,7 @@ enum 'AclShort' =>
     [ qw(private public-read public-read-write authenticated-read) ];
 
 enum 'StorageClass' =>
-    [ qw(standard reduced_redundancy) ];
+    [ qw(standard reduced_redundancy standard_ia onezone_ia) ];
 
 has 'client' =>
     ( is => 'ro', isa => 'Net::Amazon::S3::Client', required => 1 );
@@ -65,6 +65,11 @@ has 'user_metadata' => (
     isa      => 'HashRef',
     required => 0,
     default  => sub { {} },
+);
+has 'website_redirect_location' => (
+    is       => 'ro',
+    isa      => 'Str',
+    required => 0,
 );
 has 'encryption' => (
     is       => 'ro',
@@ -219,6 +224,9 @@ sub _put {
     if ( $self->storage_class && $self->storage_class ne 'standard' ) {
         $conf->{'x-amz-storage-class'} = uc $self->storage_class;
     }
+    if ( $self->website_redirect_location ) {
+        $conf->{'x-amz-website-redirect-location'} = $self->website_redirect_location;
+    }
     $conf->{"x-amz-meta-\L$_"} = $self->user_metadata->{$_}
         for keys %{ $self->user_metadata };
 
@@ -369,13 +377,13 @@ sub uri {
 }
 
 sub query_string_authentication_uri {
-    my $self = shift;
+    my ($self, $query_form) = @_;
     return Net::Amazon::S3::Request::GetObject->new(
         s3     => $self->client->s3,
         bucket => $self->bucket->name,
         key    => $self->key,
         method => 'GET',
-    )->query_string_authentication_uri( $self->expires->epoch );
+    )->query_string_authentication_uri( $self->expires->epoch, $query_form );
 }
 
 sub _content_sub {
@@ -609,7 +617,12 @@ You may also set Content-Encoding using C<content_encoding>, and
 Content-Disposition using C<content_disposition>.
 
 You may specify the S3 storage class by setting C<storage_class> to either
-C<standard> or C<reduced_redundancy>; the default is C<standard>.
+C<standard>, C<reduced_redundancy>, C<standard_ia>, or C<onezone_ia>;
+the default is C<standard>.
+
+You may set website-redirect-location object metadata by setting
+C<website_redirect_location> to either another object name in the same
+bucket, or to an external URL.
 
 =head2 put_filename
 
@@ -633,19 +646,26 @@ You may also set Content-Encoding using C<content_encoding>, and
 Content-Disposition using C<content_disposition>.
 
 You may specify the S3 storage class by setting C<storage_class> to either
-C<standard> or C<reduced_redundancy>; the default is C<standard>.
+C<standard>, C<reduced_redundancy>, C<standard_ia>, or C<onezone_ia>;
+the default is C<standard>.
+
+You may set website-redirect-location object metadata by setting
+C<website_redirect_location> to either another object name in the same
+bucket, or to an external URL.
 
 User metadata may be set by providing a non-empty hashref as
 C<user_metadata>.
 
 =head2 query_string_authentication_uri
 
-  # use query string authentication
+  # use query string authentication, forcing download with custom filename
   my $object = $bucket->object(
     key          => 'images/my_hat.jpg',
     expires      => '2009-03-01',
   );
-  my $uri = $object->query_string_authentication_uri();
+  my $uri = $object->query_string_authentication_uri({
+    'response-content-disposition' => 'attachment; filename=abc.doc',
+  });
 
 =head2 size
 
@@ -711,4 +731,3 @@ To upload an object with user metadata, set C<user_metadata> at construction
 time to a hashref, with no C<x-amz-meta-> prefixes on the key names.  When
 downloading an object, the C<get>, C<get_decoded> and C<get_filename>
 ethods set the contents of C<user_metadata> to the same format.
-

@@ -6,24 +6,12 @@ use MIME::Base64;
 use Carp qw/croak/;
 use XML::LibXML;
 
-extends 'Net::Amazon::S3::Request';
+extends 'Net::Amazon::S3::Request::Object';
 
-has 'bucket'    => ( is => 'ro', isa => 'BucketName', required => 1 );
-has 'key'       => ( is => 'ro', isa => 'Str',        required => 1 );
-has 'upload_id' => ( is => 'ro', isa => 'Str',        required => 1 );
+with 'Net::Amazon::S3::Request::Role::Query::Param::Upload_id';
+with 'Net::Amazon::S3::Request::Role::HTTP::Method::DELETE';
 
 __PACKAGE__->meta->make_immutable;
-
-sub http_request {
-  my $self = shift;
-
-  #build signed request
-  return Net::Amazon::S3::HTTPRequest->new(    #See patch below
-    s3      => $self->s3,
-    method  => 'DELETE',
-    path    => $self->_uri( $self->key ) . '?uploadId=' . $self->upload_id,
-  )->http_request;
-}
 
 1;
 
