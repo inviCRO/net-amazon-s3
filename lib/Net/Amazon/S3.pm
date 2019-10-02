@@ -132,6 +132,7 @@ use Net::Amazon::S3::Request::ListParts;
 use Net::Amazon::S3::Request::ListVersions;
 use Net::Amazon::S3::Request::PutObject;
 use Net::Amazon::S3::Request::PutPart;
+use Net::Amazon::S3::Request::Restore;
 use Net::Amazon::S3::Request::SetBucketAccessControl;
 use Net::Amazon::S3::Request::SetObjectAccessControl;
 use LWP::UserAgent::Determined;

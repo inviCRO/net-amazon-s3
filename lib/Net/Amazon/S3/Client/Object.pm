@@ -269,6 +269,20 @@ sub delete {
     $self->client->_send_request($http_request);
 }
 
+sub restore {
+    my ($self, $days, $tier) = @_;
+
+    my $http_request = Net::Amazon::S3::Request::Restore->new(
+        s3     => $self->client->s3,
+        bucket => $self->bucket->name,
+        key    => $self->key,
+        (defined $days ? (days => $days) : ()),
+        (defined $tier ? (tier => $tier) : ()),
+    )->http_request;
+
+    $self->client->_send_request($http_request);
+}
+
 sub initiate_multipart_upload {
     my $self = shift;
     my $conf;
