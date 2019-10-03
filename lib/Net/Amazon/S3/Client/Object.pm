@@ -282,7 +282,7 @@ sub restore {
 
     my $http_request = Net::Amazon::S3::Request::Restore->new(
         s3     => $self->client->s3,
-        bucket => $self->bucket->name,
+        bucket => $self->bucket,
         key    => $self->key,
         (defined $days ? (days => $days) : ()),
         (defined $tier ? (tier => $tier) : ()),

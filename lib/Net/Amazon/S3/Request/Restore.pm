@@ -2,12 +2,12 @@ package Net::Amazon::S3::Request::Restore;
 
 use Moose 0.85;
 use MooseX::StrictConstructor 0.16;
-extends 'Net::Amazon::S3::Request';
+extends 'Net::Amazon::S3::Request::Object';
+
+with 'Net::Amazon::S3::Request::Role::HTTP::Method::POST';
 
 # ABSTRACT: An internal class to set an object's access control
 
-has 'bucket'    => ( is => 'ro', isa => 'BucketName',      required => 1 );
-has 'key'       => ( is => 'ro', isa => 'Str',             required => 1 );
 has 'days'      => ( is => 'ro', isa => 'Int', required => 0, default => 14 );
 has 'tier'      => ( is => 'ro', isa => 'Str', required => 0, default => 'Standard' );
 
@@ -27,12 +27,10 @@ sub http_request {
 </RestoreRequest> 
 _
 
-    return Net::Amazon::S3::HTTPRequest->new(
-        s3      => $self->s3,
-        method  => 'POST',
-        path    => $self->_uri( $self->key ) . '?restore',
+    return $self->_build_http_request(
+        path    => $self->_request_path . '?restore',
         content => $xml,
-    )->http_request;
+    );
 }
 
 1;
